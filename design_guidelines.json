@@ -1,0 +1,124 @@
+{
+  "project_name": "Multi-Firm Wholesale Fabric ERP",
+  "theme": "LIGHT",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Functional Utility Variant)",
+  "design_philosophy": "Prioritize clarity, simplicity, and speed of data entry for non-technical older Indian business owners. Zero 'SaaS fluff'. Mimic the straightforwardness of physical ledgers (Bahi Khata) using high-contrast digital elements, large typography, and strictly linear workflows.",
+  "colors": {
+    "background": {
+      "default": "#FFFFFF",
+      "muted": "#F4F4F5",
+      "ledger": "#FDFCF8"
+    },
+    "text": {
+      "primary": "#0A0A0A",
+      "secondary": "#3F3F46",
+      "disabled": "#71717A",
+      "inverse": "#FFFFFF"
+    },
+    "primary": {
+      "DEFAULT": "#003B73",
+      "hover": "#002B54",
+      "foreground": "#FFFFFF"
+    },
+    "status": {
+      "success": "#2E7D32",
+      "success_bg": "#E8F5E9",
+      "danger": "#D32F2F",
+      "danger_bg": "#FFEBEE",
+      "warning": "#F57C00",
+      "warning_bg": "#FFF3E0"
+    },
+    "border": {
+      "default": "#D4D4D8",
+      "focus": "#003B73",
+      "table": "#E4E4E7"
+    }
+  },
+  "typography": {
+    "headings": {
+      "font_family": "Work Sans, sans-serif",
+      "weights": ["600", "700"],
+      "tracking": "tracking-tight"
+    },
+    "body": {
+      "font_family": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500"],
+      "tracking": "tracking-normal"
+    },
+    "numbers": {
+      "font_family": "IBM Plex Sans, monospace",
+      "weights": ["500", "700"],
+      "notes": "Use for all currency (₹), quantities, and tabular data to ensure vertical alignment of digits."
+    },
+    "scale": {
+      "h1": "text-3xl sm:text-4xl font-bold",
+      "h2": "text-2xl sm:text-3xl font-semibold",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "body_large": "text-lg",
+      "body": "text-base",
+      "small": "text-sm",
+      "tiny_labels": "text-xs font-bold uppercase tracking-wider"
+    }
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Generous spacing for readability, tight spacing for data tables. p-6 or p-8 for form containers. gap-6 for form fields.",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6. Keep metric cards simple: Big Number + Label.",
+    "form_layout": "Single-column layout for billing. Top-to-bottom flow. No multi-column zig-zagging which causes cognitive load.",
+    "alignment": "Right-align all numbers and currency amounts in tables. Left-align text. Center headers only if necessary.",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+  },
+  "components": {
+    "buttons": {
+      "style": "Large click targets (min-h-[48px]). Solid backgrounds for primary actions, distinct 1px borders for secondary. No subtle ghost buttons for critical actions.",
+      "text": "Clear text labels over icons (e.g., 'Save Bill' instead of a floppy disk icon)."
+    },
+    "inputs": {
+      "style": "High contrast borders (border-gray-400, not gray-200). min-h-[48px] for easy clicking. Explicit, persistent labels ABOVE the field. No floating placeholders.",
+      "focus_state": "focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none"
+    },
+    "tables": {
+      "style": "Clear horizontal borders (border-b). Striped rows (even:bg-gray-50) to help older eyes track across long rows.",
+      "padding": "py-3 px-4",
+      "typography": "IBM Plex Sans text-base"
+    },
+    "cards": {
+      "style": "Flat background, 1px solid border (#D4D4D8), minimal shadow (shadow-sm). Do not overuse glassmorphism or soft UI."
+    }
+  },
+  "print_styles": {
+    "invoice_layout": "Strict A4 layout. Black and white only. Remove all interactive UI elements (buttons, navs) via @media print.",
+    "invoice_typography": "Sans-serif, 10pt-11pt for body, 14pt for headers. Bold for totals.",
+    "invoice_grid": "Item Name | HSN Code | Qty (mtr) | Rate (₹) | Taxable | GST (5%) | Total. Right-align all numerical columns."
+  },
+  "animations": {
+    "strategy": "Minimalist. Zero parallax or staggered entrance animations. Immediate feedback only.",
+    "interactions": "Hover states (darken button bg), active states (scale down slightly), and instant toast notifications for success/error."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use sparingly. Always pair with text labels for core actions. Size: 20px to 24px."
+  },
+  "media": {
+    "login_hero": {
+      "url": "https://images.unsplash.com/photo-1705250466297-90035b3a2b26?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwyfHx3aG9sZXNhbGUlMjBmYWJyaWMlMjByb2xsc3xlbnwwfHx8fDE3ODI4NDM3ODl8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Stacked folded cloths/fabrics representing wholesale textile inventory. Use on the login screen side-panel."
+    },
+    "dashboard_placeholder": {
+      "url": "https://images.unsplash.com/photo-1517146783983-418c681b56c5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwxfHx3aG9sZXNhbGUlMjBmYWJyaWMlMjByb2xsc3xlbnwwfHx8fDE3ODI4NDM3ODl8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Thread spools, can be used as a subtle header background or empty state image."
+    }
+  },
+  "testing_guidelines": {
+    "data_testid": "All interactive elements MUST include data-testid. Format: kebab-case, role-based. e.g., 'login-submit-button', 'billing-customer-name-input', 'add-item-button'."
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. Avoid any generic SaaS purples or teals.",
+    "Use Work Sans for headings and IBM Plex Sans for body/tables. Install these via Google Fonts if not present.",
+    "For the billing form, prioritize keyboard navigation. A user should be able to tab through 'Item -> HSN -> Qty -> Rate -> Add' without touching the mouse.",
+    "Do NOT use HTML native date inputs. Use Shadcn components but style them with high contrast.",
+    "Implement @media print CSS strictly for the invoice view. It must look like a standard Indian legal GST bill.",
+    "Keep metric cards on the dashboard simple: big bold numbers, clear labels. Avoid complex charts; use basic tables for 'Recent Sales' and 'Low Stock Alerts'.",
+    "Format all currency as INR (₹) using the Indian numbering system (e.g., 1,50,000 instead of 150,000).",
+    "Add data-testid attributes to ALL form inputs, buttons, and table rows for testing purposes."
+  ]
+}
