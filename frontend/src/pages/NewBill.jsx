@@ -171,7 +171,7 @@ export default function NewBill() {
                 className="w-full min-h-[44px] px-3 border border-gray-400 rounded-md text-base focus:ring-2 focus:ring-[#003B73] focus:border-[#003B73] focus:outline-none"
               />
               <datalist id="customer-master-list">
-                {customerMaster.map((c) => <option key={c.id} value={c.name}>{c.phone || c.gst_number || ""}</option>)}
+                {customerMaster.map((c) => <option key={c.id} value={c.name} />)}
               </datalist>
             </div>
             <div>
