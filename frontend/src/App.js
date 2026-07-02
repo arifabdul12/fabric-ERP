@@ -14,6 +14,9 @@ import Purchases from "@/pages/Purchases";
 import NewPurchase from "@/pages/NewPurchase";
 import Returns from "@/pages/Returns";
 import NewReturn from "@/pages/NewReturn";
+import Customers from "@/pages/Customers";
+import CustomerLedger from "@/pages/CustomerLedger";
+import Reports from "@/pages/Reports";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -40,6 +43,9 @@ function App() {
             <Route path="/purchases/new" element={<NewPurchase />} />
             <Route path="/returns" element={<Returns />} />
             <Route path="/returns/new" element={<NewReturn />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/customers/:name" element={<CustomerLedger />} />
+            <Route path="/reports" element={<Reports />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

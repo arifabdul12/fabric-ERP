@@ -165,6 +165,8 @@ class BillCreate(BaseModel):
     gst_rate: float = 5.0
     is_interstate: bool = False
     notes: str = ""
+    credit_period_days: int = 45
+    applied_credit_note_ids: List[str] = Field(default_factory=list)
 
 
 class Bill(BaseModel):
@@ -185,6 +187,10 @@ class Bill(BaseModel):
     sgst: float
     igst: float
     total: float
+    credit_period_days: int = 45
+    credit_applied: float = 0.0
+    applied_credit_note_ids: List[str] = Field(default_factory=list)
+    net_payable: float = 0.0
     notes: str = ""
     created_at: str = Field(default_factory=now_iso)
     created_by: str = ""
@@ -377,6 +383,19 @@ async def create_bill(payload: BillCreate, user: dict = Depends(get_current_user
         sgst = round(gst_total - cgst, 2)
     total = round(subtotal + gst_total, 2)
 
+    # Apply credit notes (if any) - must belong to same firm + same customer + status=open
+    credit_applied = 0.0
+    applied_ids = []
+    if payload.applied_credit_note_ids:
+        for cn_id in payload.applied_credit_note_ids:
+            cn = await db.returns.find_one({"id": cn_id, "firm_id": fid, "customer_name": payload.customer_name, "status": "open"})
+            if not cn:
+                raise HTTPException(status_code=400, detail=f"Credit note not applicable: {cn_id}")
+            credit_applied += cn["total"]
+            applied_ids.append(cn_id)
+    credit_applied = round(credit_applied, 2)
+    net_payable = round(max(total - credit_applied, 0), 2)
+
     bill_no = await next_bill_no(fid)
     bill = Bill(
         firm_id=fid,
@@ -394,6 +413,10 @@ async def create_bill(payload: BillCreate, user: dict = Depends(get_current_user
         sgst=sgst,
         igst=igst,
         total=total,
+        credit_period_days=payload.credit_period_days,
+        credit_applied=credit_applied,
+        applied_credit_note_ids=applied_ids,
+        net_payable=net_payable,
         notes=payload.notes,
         created_by=user["id"],
     )
@@ -405,6 +428,13 @@ async def create_bill(payload: BillCreate, user: dict = Depends(get_current_user
                 {"id": it.fabric_id, "firm_id": fid},
                 {"$inc": {"meters": -it.meters}, "$set": {"updated_at": now_iso()}},
             )
+
+    # mark applied credit notes
+    if applied_ids:
+        await db.returns.update_many(
+            {"id": {"$in": applied_ids}},
+            {"$set": {"status": "applied", "applied_to_bill_no": bill_no, "applied_at": now_iso()}},
+        )
 
     doc = bill.model_dump()
     await db.bills.insert_one(doc)
@@ -630,6 +660,184 @@ async def list_credit_notes(customer_name: Optional[str] = None, user: dict = De
     items = await db.returns.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return items
 
+
+
+
+# ---------- Customer Ledger ----------
+@api_router.get("/customers")
+async def list_customers(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    now = datetime.now(timezone.utc)
+    bills = await db.bills.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    notes = await db.returns.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    by = {}
+    for b in bills:
+        name = b["customer_name"]
+        c = by.setdefault(name, {
+            "customer_name": name, "customer_phone": b.get("customer_phone", ""),
+            "customer_gst": b.get("customer_gst", ""), "customer_state": b.get("customer_state", ""),
+            "total_billed": 0.0, "credit_applied": 0.0, "open_credit_notes": 0.0,
+            "outstanding": 0.0, "bills_count": 0, "last_bill_date": None, "overdue": False,
+            "credit_period_days": b.get("credit_period_days", 45),
+        })
+        c["total_billed"] += b["total"]
+        c["credit_applied"] += b.get("credit_applied", 0.0)
+        c["bills_count"] += 1
+        bd = b.get("created_at", "")
+        if not c["last_bill_date"] or bd > c["last_bill_date"]:
+            c["last_bill_date"] = bd
+            c["credit_period_days"] = b.get("credit_period_days", 45)
+    for n in notes:
+        name = n["customer_name"]
+        c = by.setdefault(name, {
+            "customer_name": name, "customer_phone": "", "customer_gst": "", "customer_state": "",
+            "total_billed": 0.0, "credit_applied": 0.0, "open_credit_notes": 0.0,
+            "outstanding": 0.0, "bills_count": 0, "last_bill_date": None, "overdue": False,
+            "credit_period_days": 45,
+        })
+        if n.get("status") == "open":
+            c["open_credit_notes"] += n["total"]
+
+    for c in by.values():
+        c["outstanding"] = round(c["total_billed"] - c["credit_applied"] - c["open_credit_notes"], 2)
+        c["total_billed"] = round(c["total_billed"], 2)
+        c["credit_applied"] = round(c["credit_applied"], 2)
+        c["open_credit_notes"] = round(c["open_credit_notes"], 2)
+        if c["last_bill_date"] and c["outstanding"] > 0:
+            try:
+                d = datetime.fromisoformat(c["last_bill_date"].replace("Z", "+00:00"))
+                age = (now - d).days
+                c["days_since_last_bill"] = age
+                c["overdue"] = age > c["credit_period_days"]
+            except Exception:
+                c["days_since_last_bill"] = None
+    return sorted(by.values(), key=lambda x: -x["outstanding"])
+
+
+@api_router.get("/customers/{customer_name}")
+async def customer_ledger(customer_name: str, user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    bills = await db.bills.find({"firm_id": fid, "customer_name": customer_name}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    notes = await db.returns.find({"firm_id": fid, "customer_name": customer_name}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    entries = []
+    for b in bills:
+        entries.append({
+            "date": b["created_at"], "type": "bill", "reference": b["bill_no"], "id": b["id"],
+            "debit": b["total"], "credit": 0.0, "note": f"{len(b.get('items', []))} items · GST {b['gst_rate']}%",
+        })
+        if b.get("credit_applied", 0) > 0:
+            entries.append({
+                "date": b["created_at"], "type": "credit_applied", "reference": b["bill_no"],
+                "debit": 0.0, "credit": b["credit_applied"], "note": "Credit note(s) applied",
+            })
+    for n in notes:
+        entries.append({
+            "date": n["created_at"], "type": "credit_note", "reference": n["credit_note_no"], "id": n["id"],
+            "debit": 0.0, "credit": n["total"] if n.get("status") == "open" else 0.0,
+            "note": f"Status: {n.get('status', 'open')} · {n.get('reason', '')}",
+        })
+    entries.sort(key=lambda x: x["date"])
+    balance = 0.0
+    for e in entries:
+        balance += e["debit"] - e["credit"]
+        e["balance"] = round(balance, 2)
+    total_billed = sum(b["total"] for b in bills)
+    open_credits = sum(n["total"] for n in notes if n.get("status") == "open")
+    credit_applied_total = sum(b.get("credit_applied", 0.0) for b in bills)
+    outstanding = round(total_billed - credit_applied_total - open_credits, 2)
+    return {
+        "customer_name": customer_name,
+        "summary": {
+            "total_billed": round(total_billed, 2),
+            "credit_applied": round(credit_applied_total, 2),
+            "open_credit_notes": round(open_credits, 2),
+            "outstanding": outstanding,
+            "bills_count": len(bills),
+        },
+        "entries": entries,
+    }
+
+
+@api_router.get("/credit-notes/open")
+async def open_credit_notes_for_customer(customer_name: str, user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    items = await db.returns.find(
+        {"firm_id": fid, "customer_name": customer_name, "status": "open"}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+    return items
+
+
+# ---------- Reports ----------
+@api_router.get("/reports/monthly-sales")
+async def report_monthly_sales(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    bills = await db.bills.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    buckets = {}
+    for b in bills:
+        d = b.get("created_at", "")[:7]  # YYYY-MM
+        if not d:
+            continue
+        bk = buckets.setdefault(d, {"month": d, "bills_count": 0, "subtotal": 0.0, "gst": 0.0, "total": 0.0})
+        bk["bills_count"] += 1
+        bk["subtotal"] += b.get("subtotal", 0.0)
+        bk["gst"] += b.get("cgst", 0.0) + b.get("sgst", 0.0) + b.get("igst", 0.0)
+        bk["total"] += b.get("total", 0.0)
+    rows = sorted(buckets.values(), key=lambda x: x["month"], reverse=True)
+    for r in rows:
+        r["subtotal"] = round(r["subtotal"], 2)
+        r["gst"] = round(r["gst"], 2)
+        r["total"] = round(r["total"], 2)
+    return rows
+
+
+@api_router.get("/reports/mill-purchases")
+async def report_mill_purchases(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    purchases = await db.purchases.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    buckets = {}
+    for p in purchases:
+        mill = p.get("mill_name") or "Unknown"
+        bk = buckets.setdefault(mill, {"mill_name": mill, "purchases_count": 0, "total_meters": 0.0, "total_amount": 0.0})
+        bk["purchases_count"] += 1
+        for it in p.get("items", []):
+            bk["total_meters"] += it.get("meters", 0.0)
+        bk["total_amount"] += p.get("total", 0.0)
+    rows = sorted(buckets.values(), key=lambda x: -x["total_amount"])
+    for r in rows:
+        r["total_meters"] = round(r["total_meters"], 2)
+        r["total_amount"] = round(r["total_amount"], 2)
+    return rows
+
+
+@api_router.get("/reports/fabric-movement")
+async def report_fabric_movement(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    fabrics = await db.fabrics.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    bills = await db.bills.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
+    sold = {}  # fabric_id -> meters sold
+    for b in bills:
+        for it in b.get("items", []):
+            fid_it = it.get("fabric_id")
+            if fid_it:
+                sold[fid_it] = sold.get(fid_it, 0.0) + it.get("meters", 0.0)
+    rows = []
+    for f in fabrics:
+        sm = round(sold.get(f["id"], 0.0), 2)
+        rows.append({
+            "id": f["id"], "mill_name": f["mill_name"], "fabric_name": f["fabric_name"],
+            "shade_no": f["shade_no"], "fabric_count": f["fabric_count"],
+            "current_stock": f["meters"], "sold_meters": sm,
+            "movement": "fast" if sm >= 100 else ("slow" if sm < 20 else "medium"),
+        })
+    rows.sort(key=lambda x: -x["sold_meters"])
+    return rows
+
+
+@api_router.get("/reports/overdue")
+async def report_overdue(user: dict = Depends(get_current_user)):
+    # Reuse list_customers logic
+    all_c = await list_customers(user)
+    return [c for c in all_c if c.get("overdue")]
 
 
 

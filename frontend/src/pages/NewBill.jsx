@@ -28,13 +28,28 @@ export default function NewBill() {
   });
   const [isInterstate, setIsInterstate] = useState(false);
   const [gstRate] = useState(5);
+  const [creditPeriod, setCreditPeriod] = useState(45);
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState([{ ...emptyLine }]);
   const [submitting, setSubmitting] = useState(false);
+  const [openCreditNotes, setOpenCreditNotes] = useState([]);
+  const [appliedCnIds, setAppliedCnIds] = useState([]);
 
   useEffect(() => {
     api.get("/fabrics").then((r) => setFabrics(r.data));
   }, []);
+
+  // Fetch open credit notes when customer name changes (debounced)
+  useEffect(() => {
+    const name = customer.customer_name.trim();
+    if (!name) { setOpenCreditNotes([]); setAppliedCnIds([]); return; }
+    const t = setTimeout(() => {
+      api.get(`/credit-notes/open?customer_name=${encodeURIComponent(name)}`)
+        .then((r) => setOpenCreditNotes(r.data))
+        .catch(() => setOpenCreditNotes([]));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [customer.customer_name]);
 
   const setLine = (i, patch) => {
     setLines((arr) => arr.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -67,8 +82,13 @@ export default function NewBill() {
     const cgst = isInterstate ? 0 : Math.round(gst * 50) / 100;
     const sgst = isInterstate ? 0 : Math.round((gst - cgst) * 100) / 100;
     const igst = isInterstate ? gst : 0;
-    return { subtotal, gst, cgst, sgst, igst, total: Math.round((subtotal + gst) * 100) / 100 };
-  }, [lines, gstRate, isInterstate]);
+    const total = Math.round((subtotal + gst) * 100) / 100;
+    const creditApplied = openCreditNotes
+      .filter((cn) => appliedCnIds.includes(cn.id))
+      .reduce((s, cn) => s + cn.total, 0);
+    const netPayable = Math.max(Math.round((total - creditApplied) * 100) / 100, 0);
+    return { subtotal, gst, cgst, sgst, igst, total, creditApplied: Math.round(creditApplied * 100) / 100, netPayable };
+  }, [lines, gstRate, isInterstate, openCreditNotes, appliedCnIds]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -99,6 +119,8 @@ export default function NewBill() {
         items,
         gst_rate: gstRate,
         is_interstate: isInterstate,
+        credit_period_days: parseInt(creditPeriod) || 45,
+        applied_credit_note_ids: appliedCnIds,
         notes,
       });
       toast.success(`Bill ${data.bill_no} created`);
@@ -171,18 +193,60 @@ export default function NewBill() {
               />
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-2">
-            <input
-              id="interstate"
-              type="checkbox"
-              checked={isInterstate}
-              onChange={(e) => setIsInterstate(e.target.checked)}
-              data-testid="bill-interstate-toggle"
-              className="w-5 h-5"
-            />
-            <label htmlFor="interstate" className="text-sm">Interstate sale (apply IGST instead of CGST+SGST)</label>
+          <div className="mt-4 flex items-center gap-6 flex-wrap">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={isInterstate}
+                onChange={(e) => setIsInterstate(e.target.checked)}
+                data-testid="bill-interstate-toggle"
+                className="w-5 h-5"
+              />
+              <span className="text-sm">Interstate sale (apply IGST instead of CGST+SGST)</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-sm font-semibold">Credit period:</span>
+              <input
+                type="number"
+                min="0"
+                value={creditPeriod}
+                onChange={(e) => setCreditPeriod(e.target.value)}
+                className="w-20 min-h-[36px] px-2 border border-gray-400 rounded-md text-sm font-num focus:ring-2 focus:ring-[#003B73] focus:border-[#003B73] focus:outline-none"
+              />
+              <span className="text-sm">days</span>
+            </label>
           </div>
         </section>
+
+        {openCreditNotes.length > 0 && (
+          <section className="bg-white border border-gray-300 rounded-md p-6">
+            <h2 className="text-base font-semibold mb-3">Apply Open Credit Notes</h2>
+            <p className="text-xs mb-4" style={{ color: "#3F3F46" }}>
+              This customer has {openCreditNotes.length} open credit note{openCreditNotes.length > 1 ? "s" : ""}. Tick to apply against this bill.
+            </p>
+            <div className="space-y-2">
+              {openCreditNotes.map((cn) => (
+                <label key={cn.id} data-testid={`apply-cn-${cn.id}`} className="flex items-center justify-between px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={appliedCnIds.includes(cn.id)}
+                      onChange={(e) => {
+                        setAppliedCnIds((ids) => e.target.checked ? [...ids, cn.id] : ids.filter((x) => x !== cn.id));
+                      }}
+                      className="w-4 h-4"
+                    />
+                    <div>
+                      <div className="text-sm font-semibold font-num">{cn.credit_note_no}</div>
+                      <div className="text-xs" style={{ color: "#71717A" }}>{cn.reason || "—"}</div>
+                    </div>
+                  </div>
+                  <div className="font-num font-bold" style={{ color: "#2E7D32" }}>{formatINR(cn.total)}</div>
+                </label>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Items card */}
         <section className="bg-white border border-gray-300 rounded-md p-6">
@@ -350,6 +414,18 @@ export default function NewBill() {
                 <dt className="font-bold">Grand Total</dt>
                 <dd className="font-num font-bold" data-testid="bill-grand-total">{formatINR(totals.total)}</dd>
               </div>
+              {totals.creditApplied > 0 && (
+                <>
+                  <div className="flex justify-between text-sm" style={{ color: "#2E7D32" }}>
+                    <dt>Less: Credit Notes Applied</dt>
+                    <dd className="font-num font-semibold">−{formatINR(totals.creditApplied)}</dd>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-gray-300 text-lg">
+                    <dt className="font-bold">Net Payable</dt>
+                    <dd className="font-num font-bold" data-testid="bill-net-payable" style={{ color: "#003B73" }}>{formatINR(totals.netPayable)}</dd>
+                  </div>
+                </>
+              )}
             </dl>
           </div>
         </section>
