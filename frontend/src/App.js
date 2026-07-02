@@ -10,6 +10,10 @@ import Inventory from "@/pages/Inventory";
 import Bills from "@/pages/Bills";
 import NewBill from "@/pages/NewBill";
 import ViewBill from "@/pages/ViewBill";
+import Purchases from "@/pages/Purchases";
+import NewPurchase from "@/pages/NewPurchase";
+import Returns from "@/pages/Returns";
+import NewReturn from "@/pages/NewReturn";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -32,6 +36,10 @@ function App() {
             <Route path="/bills" element={<Bills />} />
             <Route path="/bills/new" element={<NewBill />} />
             <Route path="/bills/:id" element={<ViewBill />} />
+            <Route path="/purchases" element={<Purchases />} />
+            <Route path="/purchases/new" element={<NewPurchase />} />
+            <Route path="/returns" element={<Returns />} />
+            <Route path="/returns/new" element={<NewReturn />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

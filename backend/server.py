@@ -467,6 +467,172 @@ async def dashboard(user: dict = Depends(get_current_user)):
     }
 
 
+# ---------- Purchases ----------
+class PurchaseItem(BaseModel):
+    fabric_id: Optional[str] = None  # if set, increment that fabric's stock
+    mill_name: str
+    fabric_name: str
+    shade_no: str = ""
+    fabric_count: str = ""
+    meters: float
+    rate: float
+    amount: float = 0.0
+
+
+class PurchaseCreate(BaseModel):
+    mill_name: str
+    bill_number: str = ""
+    bill_date: str = ""  # ISO date string
+    items: List[PurchaseItem]
+    notes: str = ""
+
+
+@api_router.post("/purchases")
+async def create_purchase(payload: PurchaseCreate, user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="At least one item required")
+
+    items_out = []
+    total = 0.0
+    for it in payload.items:
+        amount = round(it.meters * it.rate, 2)
+        items_out.append({**it.model_dump(), "amount": amount})
+        total += amount
+
+        if it.fabric_id:
+            fab = await db.fabrics.find_one({"id": it.fabric_id, "firm_id": fid})
+            if not fab:
+                raise HTTPException(status_code=400, detail=f"Fabric not found: {it.fabric_name}")
+            await db.fabrics.update_one(
+                {"id": it.fabric_id},
+                {"$inc": {"meters": it.meters}, "$set": {"updated_at": now_iso()}},
+            )
+        else:
+            new_fabric = FabricItem(
+                firm_id=fid,
+                mill_name=it.mill_name,
+                fabric_name=it.fabric_name,
+                shade_no=it.shade_no,
+                fabric_count=it.fabric_count,
+                meters=it.meters,
+            )
+            await db.fabrics.insert_one(new_fabric.model_dump())
+            items_out[-1]["fabric_id"] = new_fabric.id
+
+    purchase = {
+        "id": str(uuid.uuid4()),
+        "firm_id": fid,
+        "mill_name": payload.mill_name,
+        "bill_number": payload.bill_number,
+        "bill_date": payload.bill_date or now_iso(),
+        "items": items_out,
+        "total": round(total, 2),
+        "notes": payload.notes,
+        "created_at": now_iso(),
+        "created_by": user["id"],
+    }
+    await db.purchases.insert_one(purchase)
+    return {k: v for k, v in purchase.items() if k != "_id"}
+
+
+@api_router.get("/purchases")
+async def list_purchases(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    items = await db.purchases.find({"firm_id": fid}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return items
+
+
+# ---------- Returns & Credit Notes ----------
+class ReturnItem(BaseModel):
+    fabric_id: Optional[str] = None
+    fabric_name: str
+    shade_no: str = ""
+    fabric_count: str = ""
+    meters: float
+    rate: float
+    amount: float = 0.0
+
+
+class ReturnCreate(BaseModel):
+    customer_name: str
+    original_bill_id: Optional[str] = None
+    original_bill_no: str = ""
+    items: List[ReturnItem]
+    reason: str = ""
+
+
+async def next_credit_note_no(firm_id: str) -> str:
+    firm = await db.firms.find_one({"id": firm_id})
+    prefix = "CN-" + (firm.get("name", "BILL")[:3] or "BIL").upper().replace(" ", "")
+    year = datetime.now(timezone.utc).strftime("%y")
+    counter = await db.credit_counters.find_one_and_update(
+        {"firm_id": firm_id, "year": year},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    seq = counter["seq"] if counter else 1
+    return f"{prefix}/{year}/{seq:04d}"
+
+
+@api_router.post("/returns")
+async def create_return(payload: ReturnCreate, user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="At least one item required")
+
+    items_out = []
+    total = 0.0
+    for it in payload.items:
+        amount = round(it.meters * it.rate, 2)
+        items_out.append({**it.model_dump(), "amount": amount})
+        total += amount
+        if it.fabric_id:
+            await db.fabrics.update_one(
+                {"id": it.fabric_id, "firm_id": fid},
+                {"$inc": {"meters": it.meters}, "$set": {"updated_at": now_iso()}},
+            )
+
+    credit_note_no = await next_credit_note_no(fid)
+    ret_id = str(uuid.uuid4())
+    doc = {
+        "id": ret_id,
+        "firm_id": fid,
+        "credit_note_no": credit_note_no,
+        "customer_name": payload.customer_name,
+        "original_bill_id": payload.original_bill_id,
+        "original_bill_no": payload.original_bill_no,
+        "items": items_out,
+        "total": round(total, 2),
+        "reason": payload.reason,
+        "status": "open",  # open | applied
+        "created_at": now_iso(),
+        "created_by": user["id"],
+    }
+    await db.returns.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.get("/returns")
+async def list_returns(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    items = await db.returns.find({"firm_id": fid}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return items
+
+
+@api_router.get("/credit-notes")
+async def list_credit_notes(customer_name: Optional[str] = None, user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    q = {"firm_id": fid}
+    if customer_name:
+        q["customer_name"] = customer_name
+    items = await db.returns.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return items
+
+
+
+
 # ---------- Seed ----------
 SEED_FIRMS = [
     {"name": "M/s. ABDUL KAYUM MOHAMMED SALAR", "gst_number": "", "phone": ""},
@@ -528,6 +694,9 @@ async def on_startup():
     await db.fabrics.create_index([("firm_id", 1), ("fabric_name", 1)])
     await db.bills.create_index([("firm_id", 1), ("created_at", -1)])
     await db.bill_counters.create_index([("firm_id", 1), ("year", 1)], unique=True)
+    await db.credit_counters.create_index([("firm_id", 1), ("year", 1)], unique=True)
+    await db.purchases.create_index([("firm_id", 1), ("created_at", -1)])
+    await db.returns.create_index([("firm_id", 1), ("created_at", -1)])
     await seed()
     logger.info("Startup complete - seeded firms & users")
 

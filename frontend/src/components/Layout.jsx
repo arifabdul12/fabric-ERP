@@ -1,12 +1,14 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { LayoutDashboard, Package, FileText, LogOut, Building2 } from "lucide-react";
+import { LayoutDashboard, Package, FileText, LogOut, Building2, TruckIcon, Undo2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/inventory", label: "Inventory", icon: Package, testid: "nav-inventory" },
-  { to: "/bills", label: "Bills", icon: FileText, testid: "nav-bills" },
+  { to: "/purchases", label: "Purchases", icon: TruckIcon, testid: "nav-purchases" },
+  { to: "/bills", label: "Sales Bills", icon: FileText, testid: "nav-bills" },
+  { to: "/returns", label: "Returns · Credit Notes", icon: Undo2, testid: "nav-returns" },
 ];
 
 export default function Layout() {
