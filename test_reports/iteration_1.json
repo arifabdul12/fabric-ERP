@@ -1,0 +1,42 @@
+{
+  "summary": "Latency-sensitive smoke pass on Kayum Fabric ERP customer-master + reports overhaul. Backend endpoints for customers-master, mill-purchases, fabric-movement, overdue all return 200 with correct shape and firm isolation. Frontend Add Customer modal on /customers, Reports tabs (monthly-sales, mill-purchases, fabric-movement, overdue), and NewBill customer-master datalist all render and function without blocking errors.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "Auth: login salar@kayum.com and hakayum@kayum.com both return JWTs; /api/auth/me returns firm scoping",
+    "POST /api/customers-master (salar) creates customer with all fields (name, address, phone, gst_number, credit_period_days, firm_id) → 200",
+    "POST /api/customers-master duplicate for same firm → 400 'Customer already exists in this firm'",
+    "POST /api/customers-master missing name → 422 pydantic validation error",
+    "GET /api/customers-master (salar) returns 1 customer created via master; (hakayum) returns 0 → firm isolation verified",
+    "GET /api/customers (salar) returns 200 with existing ledger customers (TestCo Traders, Haji miyan, etc.)",
+    "GET /api/reports/mill-purchases returns list of line items with fields mill_name, fabric_name, shade_no, fabric_count, meters, rate, bill_number, bill_date, firm_name (3 rows for salar)",
+    "GET /api/reports/fabric-movement returns list with fabric_name, mill_name, shade_no, current_stock, sold_meters, movement, firm_name (3 rows, sorted by sold desc — 'fast' first)",
+    "GET /api/reports/overdue returns [] with 200 (no overdue bills in current data — empty state acceptable per spec)",
+    "GET /api/reports/overdue for hakayum (no data) returns [] with 200 — no errors on empty data",
+    "Frontend /customers: [data-testid=add-customer-button] opens modal; all fields (customer-name-input, customer-address-input, customer-phone-input, customer-gst-input, customer-credit-period-input) present; firm select works; submit adds row to customers-table with 'New' status badge",
+    "Frontend /reports: all 4 tabs (monthly-sales, mill-purchases, fabric-movement, overdue) switch without report-error content; no uncaught exceptions",
+    "Frontend report-mill-purchases-table headers verified: MILL / FABRIC / SHADE / COUNT / METERS / RATE / BILL NO. / DATE / FIRM — data rows populated",
+    "Frontend report-fabric-movement-table headers verified: FABRIC / MILL / SHADE / TOTAL SOLD (M) / IN STOCK / MOVEMENT / FIRM — data rows populated",
+    "Frontend /bills/new: #customer-master-list datalist present in DOM with 2 options (customers fetched from /api/customers-master)"
+  ],
+  "failed": [
+    {
+      "area": "Frontend Reports console warning",
+      "issue": "React warning: 'Each child in a list should have a unique key prop' in Reports render, and 'span cannot be a child of option' hydration warning",
+      "evidence": "Console errors captured during /reports navigation. Non-blocking — tables still render correctly.",
+      "priority": "LOW"
+    },
+    {
+      "area": "Overdue report data coverage",
+      "issue": "No overdue bills exist in current dataset, so red-row rendering could not be visually verified. Empty state returned (200 []). Per spec, empty is acceptable, but red highlight rendering path was not exercised.",
+      "evidence": "GET /api/reports/overdue returned [] for both firms; overdue-table testid not present in DOM.",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "OPTIONAL: add unique React keys to Reports list items to silence console warning",
+    "OPTIONAL: to fully verify overdue red-row UI, main agent may seed a bill with credit_period_days=0"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

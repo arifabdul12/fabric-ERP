@@ -758,6 +758,55 @@ async def customer_ledger(customer_name: str, user: dict = Depends(get_current_u
     }
 
 
+
+# ---------- Customer Master ----------
+class CustomerMasterCreate(BaseModel):
+    name: str
+    address: str = ""
+    phone: str = ""
+    gst_number: str = ""
+    credit_period_days: int = 45
+    firm_id: Optional[str] = None
+
+
+@api_router.post("/customers-master")
+async def create_customer_master(payload: CustomerMasterCreate, user: dict = Depends(get_current_user)):
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Customer name is required")
+    fid = payload.firm_id or user.get("firm_id")
+    if not fid:
+        raise HTTPException(status_code=400, detail="Firm is required")
+    if user.get("role") != "admin" and fid != user.get("firm_id"):
+        raise HTTPException(status_code=403, detail="Cannot add customer to another firm")
+    firm = await db.firms.find_one({"id": fid})
+    if not firm:
+        raise HTTPException(status_code=400, detail="Firm not found")
+    existing = await db.customers_master.find_one({"firm_id": fid, "name": payload.name.strip()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Customer already exists in this firm")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "firm_id": fid,
+        "name": payload.name.strip(),
+        "address": payload.address,
+        "phone": payload.phone,
+        "gst_number": payload.gst_number,
+        "credit_period_days": int(payload.credit_period_days or 45),
+        "created_at": now_iso(),
+        "created_by": user["id"],
+    }
+    await db.customers_master.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.get("/customers-master")
+async def list_customers_master(user: dict = Depends(get_current_user)):
+    fid = user_firm_or_403(user)
+    rows = await db.customers_master.find({"firm_id": fid}, {"_id": 0}).sort("name", 1).to_list(2000)
+    return rows
+
+
+
 @api_router.get("/credit-notes/open")
 async def open_credit_notes_for_customer(customer_name: str, user: dict = Depends(get_current_user)):
     fid = user_firm_or_403(user)
@@ -793,41 +842,62 @@ async def report_monthly_sales(user: dict = Depends(get_current_user)):
 @api_router.get("/reports/mill-purchases")
 async def report_mill_purchases(user: dict = Depends(get_current_user)):
     fid = user_firm_or_403(user)
-    purchases = await db.purchases.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
-    buckets = {}
+    firm = await db.firms.find_one({"id": fid}, {"_id": 0}) or {}
+    firm_name = firm.get("name", "")
+    purchases = await db.purchases.find({"firm_id": fid}, {"_id": 0}).sort("bill_date", -1).to_list(5000)
+    rows = []
     for p in purchases:
-        mill = p.get("mill_name") or "Unknown"
-        bk = buckets.setdefault(mill, {"mill_name": mill, "purchases_count": 0, "total_meters": 0.0, "total_amount": 0.0})
-        bk["purchases_count"] += 1
         for it in p.get("items", []):
-            bk["total_meters"] += it.get("meters", 0.0)
-        bk["total_amount"] += p.get("total", 0.0)
-    rows = sorted(buckets.values(), key=lambda x: -x["total_amount"])
-    for r in rows:
-        r["total_meters"] = round(r["total_meters"], 2)
-        r["total_amount"] = round(r["total_amount"], 2)
+            rows.append({
+                "mill_name": p.get("mill_name") or it.get("mill_name") or "—",
+                "fabric_name": it.get("fabric_name", ""),
+                "shade_no": it.get("shade_no", ""),
+                "fabric_count": it.get("fabric_count", ""),
+                "meters": round(float(it.get("meters", 0) or 0), 2),
+                "rate": round(float(it.get("rate", 0) or 0), 2),
+                "amount": round(float(it.get("amount", 0) or 0), 2),
+                "bill_number": p.get("bill_number", ""),
+                "bill_date": p.get("bill_date") or p.get("created_at", ""),
+                "firm_name": firm_name,
+            })
+    rows.sort(key=lambda x: (x["mill_name"].lower(), x["bill_date"]), reverse=False)
     return rows
 
 
 @api_router.get("/reports/fabric-movement")
 async def report_fabric_movement(user: dict = Depends(get_current_user)):
     fid = user_firm_or_403(user)
+    firm = await db.firms.find_one({"id": fid}, {"_id": 0}) or {}
+    firm_name = firm.get("name", "")
     fabrics = await db.fabrics.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
     bills = await db.bills.find({"firm_id": fid}, {"_id": 0}).to_list(5000)
-    sold = {}  # fabric_id -> meters sold
+    sold = {}
+    # Track by fabric_id AND also by (name, shade) fallback for free-text bill lines
+    sold_by_key = {}
     for b in bills:
         for it in b.get("items", []):
-            fid_it = it.get("fabric_id")
-            if fid_it:
-                sold[fid_it] = sold.get(fid_it, 0.0) + it.get("meters", 0.0)
+            m = float(it.get("meters", 0) or 0)
+            if it.get("fabric_id"):
+                sold[it["fabric_id"]] = sold.get(it["fabric_id"], 0.0) + m
+            key = (it.get("fabric_name", "").strip().lower(), it.get("shade_no", "").strip().lower())
+            sold_by_key[key] = sold_by_key.get(key, 0.0) + m
     rows = []
     for f in fabrics:
-        sm = round(sold.get(f["id"], 0.0), 2)
+        sm = sold.get(f["id"], 0.0)
+        if sm == 0.0:
+            key = (f.get("fabric_name", "").strip().lower(), f.get("shade_no", "").strip().lower())
+            sm = sold_by_key.get(key, 0.0)
+        sm = round(sm, 2)
         rows.append({
-            "id": f["id"], "mill_name": f["mill_name"], "fabric_name": f["fabric_name"],
-            "shade_no": f["shade_no"], "fabric_count": f["fabric_count"],
-            "current_stock": f["meters"], "sold_meters": sm,
+            "id": f["id"],
+            "fabric_name": f.get("fabric_name", ""),
+            "mill_name": f.get("mill_name", ""),
+            "shade_no": f.get("shade_no", ""),
+            "fabric_count": f.get("fabric_count", ""),
+            "current_stock": round(float(f.get("meters", 0) or 0), 2),
+            "sold_meters": sm,
             "movement": "fast" if sm >= 100 else ("slow" if sm < 20 else "medium"),
+            "firm_name": firm_name,
         })
     rows.sort(key=lambda x: -x["sold_meters"])
     return rows
@@ -835,9 +905,36 @@ async def report_fabric_movement(user: dict = Depends(get_current_user)):
 
 @api_router.get("/reports/overdue")
 async def report_overdue(user: dict = Depends(get_current_user)):
-    # Reuse list_customers logic
-    all_c = await list_customers(user)
-    return [c for c in all_c if c.get("overdue")]
+    fid = user_firm_or_403(user)
+    firm = await db.firms.find_one({"id": fid}, {"_id": 0}) or {}
+    firm_name = firm.get("name", "")
+    now = datetime.now(timezone.utc)
+    bills = await db.bills.find({"firm_id": fid}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    rows = []
+    for b in bills:
+        amount_due = float(b.get("net_payable", b.get("total", 0)) or 0)
+        if amount_due <= 0:
+            continue
+        try:
+            d = datetime.fromisoformat(b.get("created_at", "").replace("Z", "+00:00"))
+            age = (now - d).days
+        except Exception:
+            continue
+        cp = int(b.get("credit_period_days", 45) or 45)
+        if age <= cp:
+            continue
+        rows.append({
+            "customer_name": b.get("customer_name", ""),
+            "firm_name": firm_name,
+            "bill_number": b.get("bill_no", ""),
+            "bill_date": b.get("created_at", ""),
+            "amount_due": round(amount_due, 2),
+            "credit_period_days": cp,
+            "days_overdue": age - cp,
+            "age_days": age,
+        })
+    rows.sort(key=lambda x: -x["days_overdue"])
+    return rows
 
 
 
@@ -905,6 +1002,7 @@ async def on_startup():
     await db.credit_counters.create_index([("firm_id", 1), ("year", 1)], unique=True)
     await db.purchases.create_index([("firm_id", 1), ("created_at", -1)])
     await db.returns.create_index([("firm_id", 1), ("created_at", -1)])
+    await db.customers_master.create_index([("firm_id", 1), ("name", 1)], unique=True)
     await seed()
     logger.info("Startup complete - seeded firms & users")
 

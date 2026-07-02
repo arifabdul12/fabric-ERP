@@ -34,10 +34,24 @@ export default function NewBill() {
   const [submitting, setSubmitting] = useState(false);
   const [openCreditNotes, setOpenCreditNotes] = useState([]);
   const [appliedCnIds, setAppliedCnIds] = useState([]);
+  const [customerMaster, setCustomerMaster] = useState([]);
 
   useEffect(() => {
     api.get("/fabrics").then((r) => setFabrics(r.data));
+    api.get("/customers-master").then((r) => setCustomerMaster(r.data)).catch(() => {});
   }, []);
+
+  const applyMaster = (name) => {
+    const m = customerMaster.find((c) => c.name === name);
+    if (!m) return;
+    setCustomer((cur) => ({
+      ...cur,
+      customer_name: m.name,
+      customer_phone: m.phone || cur.customer_phone,
+      customer_gst: m.gst_number || cur.customer_gst,
+    }));
+    if (m.credit_period_days) setCreditPeriod(String(m.credit_period_days));
+  };
 
   // Fetch open credit notes when customer name changes (debounced)
   useEffect(() => {
@@ -150,11 +164,15 @@ export default function NewBill() {
               <input
                 type="text"
                 required
+                list="customer-master-list"
                 value={customer.customer_name}
-                onChange={(e) => setCustomer({ ...customer, customer_name: e.target.value })}
+                onChange={(e) => { setCustomer({ ...customer, customer_name: e.target.value }); applyMaster(e.target.value); }}
                 data-testid="bill-customer-name-input"
                 className="w-full min-h-[44px] px-3 border border-gray-400 rounded-md text-base focus:ring-2 focus:ring-[#003B73] focus:border-[#003B73] focus:outline-none"
               />
+              <datalist id="customer-master-list">
+                {customerMaster.map((c) => <option key={c.id} value={c.name}>{c.phone || c.gst_number || ""}</option>)}
+              </datalist>
             </div>
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider mb-2" style={{ color: "#3F3F46" }}>State</label>
